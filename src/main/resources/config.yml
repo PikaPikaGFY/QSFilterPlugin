@@ -9,6 +9,9 @@ http:
   cors-allowed-origins:
     - "*"
 
+# /qsfilter lf 的前端 API 地址（指向 Web 服务器，留空则用本地 http.host:http.port）
+lf-api-url: ""
+
 # 价格过滤配置
 filter:
   enabled: true

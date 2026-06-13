@@ -150,9 +150,16 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
         }
         String itemId = args[1].toLowerCase();
 
-        // 异步 HTTP 调用 API，避免阻塞主线程
-        String apiUrl = "http://" + pluginConfig.getHttpHost() + ":" + pluginConfig.getHttpPort()
-                + "/api/price/" + itemId;
+        // 异步 HTTP 调用前端 API（可通过 lf-api-url 配置外部地址）
+        String baseUrl = pluginConfig.getLfApiUrl();
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            baseUrl = "http://" + pluginConfig.getHttpHost() + ":" + pluginConfig.getHttpPort();
+        }
+        // 去掉末尾斜杠
+        if (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+        String apiUrl = baseUrl + "/api/price/" + itemId;
 
         getServer().getScheduler().runTaskAsynchronously(this, () -> {
             try {

@@ -21,6 +21,8 @@ public class PluginConfig {
 
     private final int refreshIntervalSeconds;
 
+    private final String lfApiUrl;
+
     public PluginConfig(YamlConfiguration yaml) {
         this.httpHost = yaml.getString("http.host", "0.0.0.0");
         this.httpPort = yaml.getInt("http.port", 8765);
@@ -38,6 +40,8 @@ public class PluginConfig {
                 : null;
 
         this.refreshIntervalSeconds = yaml.getInt("data-collection.refresh-interval-seconds", 60);
+
+        this.lfApiUrl = yaml.getString("lf-api-url", "");
     }
 
     public static PluginConfig load(File dataFolder) {
@@ -77,4 +81,7 @@ public class PluginConfig {
     public void setSecretKey(byte[] key) { this.secretKey = key; }
 
     public int getRefreshIntervalSeconds() { return refreshIntervalSeconds; }
+
+    /** /qsfilter lf 的前端 API 地址。为空时自动使用本地 http://host:port */
+    public String getLfApiUrl() { return lfApiUrl; }
 }
