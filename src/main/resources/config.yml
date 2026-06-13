@@ -1,0 +1,32 @@
+# =============================================
+# QSFilterPlugin - 配置文件
+# =============================================
+
+# HTTP API 服务器配置
+http:
+  host: "0.0.0.0"
+  port: 8765
+  cors-allowed-origins:
+    - "*"
+
+# 价格过滤配置
+filter:
+  enabled: true
+  min-ratio: 0.6        # 价格合理度下限 (当前价格/加权均价)
+  max-ratio: 1.5        # 价格合理度上限
+  min-record-count: 3   # 最少需要几条交易记录才启用过滤
+
+# AES-GCM 加密配置（默认关闭，使用明文传输）
+encryption:
+  enabled: false
+  secret-key: ""
+
+# 数据采集配置
+data-collection:
+  refresh-interval-seconds: 60
+
+# 数据库配置
+database:
+  type: "sqlite"
+  sqlite:
+    file: "plugins/QSFilterPlugin/transactions.db"

@@ -1,0 +1,20 @@
+name: QSFilterPlugin
+version: "${version}"
+main: cn.hdbstudio.qsfilter.QSFilterPlugin
+api-version: "1.21"
+author: TRIPLE Y, HDB-Studio
+description: QS 商店过滤插件 — 价格加权平均过滤 + RESTful API 暴露
+
+softdepend:
+  - QuickShop-Hikari
+
+commands:
+  qsfilter:
+    description: QSFilterPlugin 管理命令
+    usage: /qsfilter <reload|stats|clearcache>
+    permission: qsfilter.admin
+
+permissions:
+  qsfilter.admin:
+    description: 管理 QSFilterPlugin
+    default: op

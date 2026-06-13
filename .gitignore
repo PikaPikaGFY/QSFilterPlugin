@@ -1,0 +1,23 @@
+# Build output
+build/
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Reference repo (not part of this project)
+QshopWebUI/
+
+# Local test server
+test/
+
+# Cursor agent artifacts
+agent-tools/
+agent-transcripts/
+terminals/
+
+# OS
+.DS_Store
+Thumbs.db
