@@ -15,12 +15,14 @@ java {
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
+    maven("https://repo.codemc.io/repository/maven-public/")
 }
 
 dependencies {
     paperweight.paperDevBundle("1.21.3-R0.1-SNAPSHOT")
 
-    // QuickShop-Hikari — 全部通过反射访问，运行时由服务器提供
+    // QuickShop-Hikari API — compileOnly，运行时由 QS 插件提供
+    compileOnly("com.ghostchu:quickshop-api:6.2.0.11")
 
     // Javalin — 嵌入式 HTTP 服务器
     implementation("io.javalin:javalin:6.3.0") {
