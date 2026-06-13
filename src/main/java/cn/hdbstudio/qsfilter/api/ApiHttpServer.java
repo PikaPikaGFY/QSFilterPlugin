@@ -5,6 +5,7 @@ import cn.hdbstudio.qsfilter.crypto.EncryptionUtil;
 import cn.hdbstudio.qsfilter.filter.FilteredShop;
 import cn.hdbstudio.qsfilter.filter.PriceFilterEngine;
 import cn.hdbstudio.qsfilter.quickshop.QuickShopBridge;
+import cn.hdbstudio.qsfilter.storage.TransactionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -12,7 +13,6 @@ import io.javalin.Javalin;
 import io.javalin.http.ContentType;
 import io.javalin.http.Context;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
 import java.util.logging.Logger;
@@ -31,16 +31,19 @@ public class ApiHttpServer {
     private final PriceFilterEngine filterEngine;
     private final EncryptionUtil encryptionUtil;
     private final QuickShopBridge quickShopBridge;
+    private final TransactionRepository transactionRepository;
     private final ObjectMapper objectMapper;
     private final Logger logger;
     private Javalin app;
 
     public ApiHttpServer(PluginConfig config, PriceFilterEngine filterEngine,
-                         EncryptionUtil encryptionUtil, QuickShopBridge quickShopBridge) {
+                         EncryptionUtil encryptionUtil, QuickShopBridge quickShopBridge,
+                         TransactionRepository transactionRepository) {
         this.config = config;
         this.filterEngine = filterEngine;
         this.encryptionUtil = encryptionUtil;
         this.quickShopBridge = quickShopBridge;
+        this.transactionRepository = transactionRepository;
         this.objectMapper = new ObjectMapper();
         this.logger = Logger.getLogger("QSFilter-API");
     }
@@ -93,6 +96,9 @@ public class ApiHttpServer {
 
         // 获取特定物品的价格历史
         app.get("/api/price-history", this::handlePriceHistory);
+
+        // 物品价格查询（供 /qsfilter lf 使用）
+        app.get("/api/price/{material}", this::handleGetPrice);
 
         // OPTIONS (CORS preflight)
         app.options("/api/*", ctx -> ctx.status(204));
@@ -204,6 +210,69 @@ public class ApiHttpServer {
         result.put("message", "价格历史查询功能待实现");
 
         sendApiResponse(ctx, result);
+    }
+
+    private void handleGetPrice(Context ctx) {
+        String material = ctx.pathParam("material");
+        if (material == null || material.isEmpty()) {
+            ctx.status(400).result("{\"error\":\"缺少物品材质\"}");
+            return;
+        }
+
+        String materialUpper = material.toUpperCase();
+
+        // 从缓存获取加权均价
+        double weightedAvg = filterEngine.getWeightedPrice(materialUpper);
+
+        // 该物品的商店列表
+        List<FilteredShop> shops = filterEngine.getFilteredShops().stream()
+                .filter(s -> s.getMaterial().equalsIgnoreCase(material)
+                        || s.getItemId().equalsIgnoreCase(material))
+                .collect(Collectors.toList());
+
+        // 交易统计
+        var priceResult = transactionRepository.getWeightedAvgPrice(materialUpper);
+
+        ObjectNode result = objectMapper.createObjectNode();
+        result.put("material", materialUpper);
+        result.put("item_id", material.toLowerCase());
+
+        if (weightedAvg > 0) {
+            result.put("weighted_avg_price", Math.round(weightedAvg * 100.0) / 100.0);
+            result.put("record_count", priceResult.recordCount());
+            result.put("total_sold_amount", priceResult.totalAmount());
+        } else {
+            result.put("weighted_avg_price", -1);
+            result.put("record_count", 0);
+            result.put("total_sold_amount", 0);
+        }
+
+        result.put("current_shop_count", shops.size());
+
+        // 按 SELLING / BUYING 分组统计
+        var sellingShops = shops.stream().filter(s -> "SELLING".equalsIgnoreCase(s.getShopType())).toList();
+        var buyingShops  = shops.stream().filter(s -> "BUYING".equalsIgnoreCase(s.getShopType())).toList();
+
+        addShopPriceStats(result, "selling", sellingShops);
+        addShopPriceStats(result, "buying", buyingShops);
+
+        sendApiResponse(ctx, result);
+    }
+
+    private void addShopPriceStats(ObjectNode result, String prefix, List<FilteredShop> shops) {
+        result.put(prefix + "_shop_count", shops.size());
+        if (!shops.isEmpty()) {
+            double minP = shops.stream().mapToDouble(FilteredShop::getPrice).min().orElse(0);
+            double maxP = shops.stream().mapToDouble(FilteredShop::getPrice).max().orElse(0);
+            double avgP = shops.stream().mapToDouble(FilteredShop::getPrice).average().orElse(0);
+            result.put(prefix + "_min_price", Math.round(minP * 100.0) / 100.0);
+            result.put(prefix + "_max_price", Math.round(maxP * 100.0) / 100.0);
+            result.put(prefix + "_avg_price", Math.round(avgP * 100.0) / 100.0);
+        } else {
+            result.put(prefix + "_min_price", -1);
+            result.put(prefix + "_max_price", -1);
+            result.put(prefix + "_avg_price", -1);
+        }
     }
 
     // ======================== 工具方法 ========================

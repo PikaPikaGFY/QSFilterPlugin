@@ -40,7 +40,7 @@ GET /api/shops
 |------|------|------|------|
 | `sort` | string | 否 | 排序字段：`price`（价格）、`amount`（数量）、`ratio`（价格比） |
 | `order` | string | 否 | 排序方向：`asc`（升序）、`desc`（降序） |
-| `type` | string | 否 | 商店类型：`SELLING`（出售）、`BUYING`（收購） |
+| `type` | string | 否 | 商店类型：`SELLING`（出售）、`BUYING`（收购） |
 | `world` | string | 否 | 按世界名称过滤 |
 | `show_all` | string | 否 | `"true"` 显示全部（含被价格过滤的），默认只显示过滤后 |
 | `page` | int | 否 | 页码，默认 1 |
@@ -103,7 +103,79 @@ GET /api/shops/search?keyword=钻石
 
 ---
 
-### 2.4 统计信息
+### 2.4 物品价格查询
+
+```
+GET /api/price/{item_id}
+```
+
+| 参数 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `item_id` | path | **是** | 物品 ID，小写（如 `diamond`、`acacia_boat`） |
+
+这是 `/qsfilter lf <物品ID>` 和 Web 前端的共用接口。
+
+**示例:**
+```
+GET /api/price/diamond
+GET /api/price/acacia_boat
+```
+
+**有数据时 (200):**
+```json
+{
+  "material": "DIAMOND",
+  "item_id": "diamond",
+  "weighted_avg_price": 48.52,
+  "record_count": 156,
+  "total_sold_amount": 9840,
+  "current_shop_count": 12,
+  "selling_shop_count": 8,
+  "selling_min_price": 42.0,
+  "selling_max_price": 55.0,
+  "selling_avg_price": 49.0,
+  "buying_shop_count": 4,
+  "buying_min_price": 30.0,
+  "buying_max_price": 40.0,
+  "buying_avg_price": 35.5
+}
+```
+
+**无数据时 (200):**
+```json
+{
+  "material": "DIAMOND",
+  "item_id": "diamond",
+  "weighted_avg_price": -1,
+  "record_count": 0,
+  "total_sold_amount": 0,
+  "current_shop_count": 0,
+  "selling_shop_count": 0,
+  "selling_min_price": -1,
+  "selling_max_price": -1,
+  "selling_avg_price": -1,
+  "buying_shop_count": 0,
+  "buying_min_price": -1,
+  "buying_max_price": -1,
+  "buying_avg_price": -1
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `material` | string | 物品材质原名（大写） |
+| `item_id` | string | 物品 ID（小写） |
+| `weighted_avg_price` | number | 加权历史均价 `Σ(成交价×数量) / Σ数量`，无数据时 -1 |
+| `record_count` | int | 该物品的历史成交笔数 |
+| `total_sold_amount` | int | 该物品历史累计售出总数量 |
+| `current_shop_count` | int | 该物品当前挂牌的商店数量 |
+| `current_min_price` | number | 当前挂牌最低价，无数据时 -1 |
+| `current_max_price` | number | 当前挂牌最高价，无数据时 -1 |
+| `current_avg_price` | number | 当前挂牌均价，无数据时 -1 |
+
+---
+
+### 2.5 统计信息
 
 ```
 GET /api/stats
@@ -148,27 +220,43 @@ GET /api/stats
 | `item_id` | string | 物品 ID，去 `minecraft:` 前缀后全小写（如 `diamond`、`acacia_boat`） |
 | `price` | double | 单价 |
 | `stacking_amount` | int | 每次交易数量 |
-| `shop_type` | string | `SELLING`（出售）或 `BUYING`（收購） |
+| `shop_type` | string | `SELLING`（出售）或 `BUYING`（收购） |
 | `weighted_avg_price` | double | 该物品的加权历史均价 |
 | `price_ratio` | double | 当前价格 / 加权均价 |
-| `price_reasonable` | boolean | 价格是否合理（比值在 `min_ratio` ~ `max_ratio` 之间） |
+| `price_reasonable` | boolean | 价格是否合理 |
 
 ---
 
 ## 4. 价格过滤说明
 
-插件基于 QuickShop 交易记录计算每个物品的**加权历史均价**:
+### 4.1 核心公式
+
+插件基于 QuickShop 历史交易记录的 **SELLING（出售）** 成交数据计算每个物品的加权均价：
 
 ```
-加权历史均价 = Σ(成交价 × 采购量) / Σ(采购量)
-价格合理度   = 当前定价 / 加权历史均价
+加权历史均价 = Σ(单次成交价 × 单次采购量) / Σ(所有历史采购量)
+价格合理度比值 = 当前定价 / 加权历史均价
 ```
 
-- 比值在 `0.6 ~ 1.5` 之间 → `price_reasonable: true`，默认显示
-- 超出区间 → 视为异常定价（天价/恶意低价），默认过滤
+### 4.2 过滤规则
+
+- 比值在 `0.6 ~ 1.5` 之间（可配） → `price_reasonable: true`，API 默认显示
+- 超出区间 → 视为异常定价（天价宝库 / 恶意低价），默认过滤
+- `BUYING`（收购）商店 → **不参与加权均价计算，也不被过滤**，始终 `price_reasonable: true`
+- 交易记录不足 `min-record-count`（默认 3 笔）的物品 → 视作数据不足，不过滤
 - 默认 `/api/shops` 只返回合理价格的商店
 - 想看全部请加 `?show_all=true`
-- 区间可在 `config.yml` 中调整
+- 区间和最小记录数可在 `config.yml` 中调整
+
+### 4.3 配置项
+
+```yaml
+filter:
+  enabled: true          # 是否启用过滤
+  min-ratio: 0.6         # 价格合理度下限
+  max-ratio: 1.5         # 价格合理度上限
+  min-record-count: 3    # 最少交易记录笔数（不足则不过滤）
+```
 
 ---
 
@@ -185,7 +273,8 @@ GET /api/stats
 ## 6. 注意事项
 
 - 数据每 **60 秒**（可配）从 QuickShop 同步一次，非实时
-- 新上架物品无历史交易数据时，默认视为合理价格（不误杀）
+- 新上架物品 / 交易记录不足的物品默认视为合理价格（不误杀）
 - CORS 已开放，支持跨域请求
 - 端口和过滤参数可在 `plugins/QSFilterPlugin/config.yml` 中修改
 - `/api/health` 不经过过滤引擎，始终可用
+- `/api/price/{item_id}` 是 `/qsfilter lf` 命令和 Web 前端的共用数据源

@@ -24,7 +24,8 @@ import java.util.stream.Collectors;
 
 public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
 
-    private static final List<String> SUBCOMMANDS = List.of(
+    private static final List<String> PLAYER_SUBCOMMANDS = List.of("lf");
+    private static final List<String> ADMIN_SUBCOMMANDS = List.of(
             "lf", "condition", "about", "reload", "stats", "clearcache"
     );
 
@@ -65,7 +66,7 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
         shopDataCollector = new ShopDataCollector(this, quickShopBridge, priceFilterEngine, pluginConfig);
         shopDataCollector.start();
 
-        apiHttpServer = new ApiHttpServer(pluginConfig, priceFilterEngine, encryptionUtil, quickShopBridge);
+        apiHttpServer = new ApiHttpServer(pluginConfig, priceFilterEngine, encryptionUtil, quickShopBridge, transactionRepository);
         apiHttpServer.start();
         getLogger().info("HTTP API 服务器启动于 " + pluginConfig.getHttpHost() + ":" + pluginConfig.getHttpPort());
 
@@ -96,12 +97,26 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
         }
 
         switch (args[0].toLowerCase()) {
-            case "lf"         -> cmdLookup(sender, args);
-            case "condition"  -> cmdCondition(sender);
-            case "about"      -> cmdAbout(sender);
-            case "reload"     -> cmdReload(sender);
-            case "stats"      -> cmdStats(sender);
-            case "clearcache" -> cmdClearCache(sender);
+            case "lf" -> {
+                if (!sender.hasPermission("qsfilter.use")) {
+                    sender.sendMessage("§c[QSFilter] 你没有权限使用此命令");
+                    return true;
+                }
+                cmdLookup(sender, args);
+            }
+            case "condition", "about", "reload", "stats", "clearcache" -> {
+                if (!sender.hasPermission("qsfilter.admin")) {
+                    sender.sendMessage("§c[QSFilter] 你没有权限使用此命令");
+                    return true;
+                }
+                switch (args[0].toLowerCase()) {
+                    case "condition"  -> cmdCondition(sender);
+                    case "about"      -> cmdAbout(sender);
+                    case "reload"     -> cmdReload(sender);
+                    case "stats"      -> cmdStats(sender);
+                    case "clearcache" -> cmdClearCache(sender);
+                }
+            }
             default -> {
                 sender.sendMessage("§c[QSFilter] 未知子命令: " + args[0]);
                 sendHelp(sender);
@@ -112,63 +127,90 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
 
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("§6======== QSFilterPlugin ========");
-        sender.sendMessage("§e/qsfilter lf <物品ID> §7— 查询物品加权历史均价");
-        sender.sendMessage("§e/qsfilter condition §7— 查看插件 API 状态");
-        sender.sendMessage("§e/qsfilter about §7— 输出插件信息");
-        sender.sendMessage("§e/qsfilter reload §7— 热重载配置（无需重启）");
-        sender.sendMessage("§e/qsfilter stats §7— 查看统计信息");
-        sender.sendMessage("§e/qsfilter clearcache §7— 清除缓存");
+        // lf 所有玩家可用
+        if (sender.hasPermission("qsfilter.use")) {
+            sender.sendMessage("§e/qsfilter lf <物品ID> §7— 查询物品加权历史均价");
+        }
+        // 以下只有管理员可见
+        if (sender.hasPermission("qsfilter.admin")) {
+            sender.sendMessage("§e/qsfilter condition §7— 查看插件 API 状态");
+            sender.sendMessage("§e/qsfilter about §7— 输出插件信息");
+            sender.sendMessage("§e/qsfilter reload §7— 热重载配置（无需重启）");
+            sender.sendMessage("§e/qsfilter stats §7— 查看统计信息");
+            sender.sendMessage("§e/qsfilter clearcache §7— 清除缓存");
+        }
     }
 
-    // --- lf ---
+    // --- lf (通过 API 查询 — 与 WebUI 数据一致) ---
     private void cmdLookup(CommandSender sender, String[] args) {
         if (args.length < 2) {
             sender.sendMessage("§c[QSFilter] 用法: /qsfilter lf <物品ID>");
             sender.sendMessage("§7  例: /qsfilter lf diamond");
             return;
         }
-        String material = args[1].toUpperCase();
+        String itemId = args[1].toLowerCase();
 
-        // 从缓存中查找
-        double avgPrice = priceFilterEngine.getWeightedPrice(material);
-        if (avgPrice < 0) {
-            // 尝试从全量商店数据模糊匹配
-            var matching = priceFilterEngine.getFilteredShops().stream()
-                    .filter(s -> s.getItemId().equalsIgnoreCase(args[1])
-                            || s.getMaterial().equalsIgnoreCase(material))
-                    .collect(Collectors.toList());
+        // 异步 HTTP 调用 API，避免阻塞主线程
+        String apiUrl = "http://" + pluginConfig.getHttpHost() + ":" + pluginConfig.getHttpPort()
+                + "/api/price/" + itemId;
 
-            if (matching.isEmpty()) {
-                matching = priceFilterEngine.getFilteredShops().stream()
-                        .filter(s -> s.getItemId().contains(args[1].toLowerCase())
-                                || s.getMaterial().toLowerCase().contains(args[1].toLowerCase()))
-                        .collect(Collectors.toList());
+        getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                var client = java.net.http.HttpClient.newHttpClient();
+                var request = java.net.http.HttpRequest.newBuilder()
+                        .uri(java.net.URI.create(apiUrl))
+                        .GET()
+                        .build();
+                var response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+                String body = response.body();
+
+                if (response.statusCode() == 200 && body != null && !body.isEmpty()) {
+                    var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+
+                    double wap = json.path("weighted_avg_price").asDouble(-1);
+                    int records = json.path("record_count").asInt(0);
+                    int sold = json.path("total_sold_amount").asInt(0);
+
+                    getServer().getScheduler().runTask(this, () -> {
+                        sender.sendMessage("§6======== §e" + itemId + " §6======== ");
+
+                        // 加权均价（仅来自 SELLING 历史成交）
+                        if (wap > 0) {
+                            sender.sendMessage("§7  加权历史均价: §f" + String.format("%.2f", wap)
+                                    + "  §8(§7来自 §f" + records + " §7笔成交, 累计 §f" + sold + " §7个§8)");
+                        } else {
+                            sender.sendMessage("§7  加权历史均价: §e暂无（交易数据不足）");
+                        }
+
+                        // SELLING 商店
+                        printShopGroup(sender, json, "selling", "§a出售");
+                        // BUYING 商店
+                        printShopGroup(sender, json, "buying", "§c收购");
+                    });
+                } else {
+                    getServer().getScheduler().runTask(this, () ->
+                            sender.sendMessage("§c[QSFilter] API 查询失败 (HTTP " + response.statusCode() + ")"));
+                }
+            } catch (Exception e) {
+                getServer().getScheduler().runTask(this, () ->
+                        sender.sendMessage("§c[QSFilter] 查询异常: " + e.getMessage()));
             }
+        });
 
-            if (matching.isEmpty()) {
-                sender.sendMessage("§c[QSFilter] 未找到物品 " + args[1] + " 的商店数据");
-            } else {
-                double manualAvg = matching.stream()
-                        .mapToDouble(FilteredShop::getPrice)
-                        .average().orElse(0);
-                sender.sendMessage("§6[QSFilter] §e" + args[1] + " §7当前商店均价: §f" + String.format("%.2f", manualAvg));
-                sender.sendMessage("§7  来自 " + matching.size() + " 个商店 (无历史交易加权数据)");
-            }
-            return;
-        }
+        sender.sendMessage("§7[QSFilter] 正在查询 API...");
+    }
 
-        // 从商店数据中取样例
-        var shops = priceFilterEngine.getFilteredShops().stream()
-                .filter(s -> s.getMaterial().equalsIgnoreCase(material))
-                .collect(Collectors.toList());
-
-        sender.sendMessage("§6[QSFilter] §e" + args[1]);
-        sender.sendMessage("§7  加权历史均价: §f" + String.format("%.2f", avgPrice));
-        sender.sendMessage("§7  当前商店数: §f" + shops.size());
-        if (!shops.isEmpty()) {
-            double minP = shops.stream().mapToDouble(FilteredShop::getPrice).min().orElse(0);
-            double maxP = shops.stream().mapToDouble(FilteredShop::getPrice).max().orElse(0);
-            sender.sendMessage("§7  当前价格区间: §f" + String.format("%.2f", minP) + " ~ " + String.format("%.2f", maxP));
+    private void printShopGroup(CommandSender sender, com.fasterxml.jackson.databind.JsonNode json,
+                                String prefix, String label) {
+        int count = json.path(prefix + "_shop_count").asInt(0);
+        sender.sendMessage("§7  " + label + "商店: §f" + count + " §7个");
+        if (count > 0) {
+            double minP = json.path(prefix + "_min_price").asDouble(-1);
+            double maxP = json.path(prefix + "_max_price").asDouble(-1);
+            double avgP = json.path(prefix + "_avg_price").asDouble(-1);
+            sender.sendMessage("    §7均价 §f" + String.format("%.2f", avgP)
+                    + "  §8|  §7区间 §f" + String.format("%.2f", minP)
+                    + " §8~ §f" + String.format("%.2f", maxP));
         }
     }
 
@@ -232,7 +274,10 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
                                                  @NotNull String label, @NotNull String[] args) {
         if (args.length == 1) {
             String prefix = args[0].toLowerCase();
-            return SUBCOMMANDS.stream()
+            List<String> allowed = sender.hasPermission("qsfilter.admin")
+                    ? ADMIN_SUBCOMMANDS
+                    : PLAYER_SUBCOMMANDS;
+            return allowed.stream()
                     .filter(s -> s.startsWith(prefix))
                     .collect(Collectors.toList());
         }

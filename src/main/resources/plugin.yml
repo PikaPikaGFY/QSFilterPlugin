@@ -10,11 +10,15 @@ softdepend:
 
 commands:
   qsfilter:
-    description: QSFilterPlugin 管理命令
+    description: QSFilterPlugin 命令
     usage: /qsfilter <lf|condition|about|reload|stats|clearcache>
-    permission: qsfilter.admin
 
 permissions:
+  qsfilter.use:
+    description: 允许使用 /qsfilter lf 查询物品价格
+    default: true
   qsfilter.admin:
-    description: 管理 QSFilterPlugin
+    description: 管理 QSFilterPlugin（condition/about/reload/stats/clearcache/dumpqs）
     default: op
+    children:
+      qsfilter.use: true

@@ -55,14 +55,28 @@ public class PriceFilterEngine {
                         TransactionRepository.MaterialWeightedPrice::material,
                         TransactionRepository.MaterialWeightedPrice::avgPrice
                 ));
+        // 记录数映射，用于 minRecordCount 判定
+        Map<String, Integer> recordCountMap = priceMap.stream()
+                .collect(Collectors.toMap(
+                        TransactionRepository.MaterialWeightedPrice::material,
+                        TransactionRepository.MaterialWeightedPrice::recordCount
+                ));
         weightedPriceCache.putAll(avgPriceMap);
 
         // 2. 遍历每个商店，计算价格合理度
         List<FilteredShop> filtered = new ArrayList<>();
         for (FilteredShop shop : shops) {
-            Double avgPrice = avgPriceMap.get(shop.getMaterial());
+            // 收购（BUYING）商店不参与加权均价过滤，始终视为合理
+            if ("BUYING".equalsIgnoreCase(shop.getShopType())) {
+                shop.setPriceReasonable(true);
+                filtered.add(shop);
+                continue;
+            }
 
-            if (avgPrice != null && avgPrice > 0) {
+            Double avgPrice = avgPriceMap.get(shop.getMaterial());
+            int recordCount = recordCountMap.getOrDefault(shop.getMaterial(), 0);
+
+            if (avgPrice != null && avgPrice > 0 && recordCount >= config.getMinRecordCount()) {
                 double ratio = shop.getPrice() / avgPrice;
                 shop.setWeightedAvgPrice(avgPrice);
                 shop.setPriceRatio(ratio);
@@ -80,7 +94,7 @@ public class PriceFilterEngine {
                     filtered.add(shop);
                 }
             } else {
-                // 无历史数据：视为合理（新物品不应被误杀）
+                // 无历史数据或数据不足：视为合理（新物品不应被误杀）
                 shop.setWeightedAvgPrice(shop.getPrice());
                 shop.setPriceRatio(1.0);
                 shop.setPriceReasonable(true);
