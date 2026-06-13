@@ -6,6 +6,9 @@ import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.inventory.ItemStack;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -13,9 +16,9 @@ import java.util.logging.Logger;
 
 /**
  * QuickShop-Hikari API 桥接层。
- * 全部通过反射访问，无需编译期依赖 QuickShop API。
+ * 使用 MethodHandle 绕过 Paper 反射重写器，避免触发 PlaceholderAPI 等无关依赖的类加载。
  *
- * 对应 QS Shop 对象的方法:
+ * QS Shop 方法:
  *   getShopId()             → long
  *   getOwner()              → UUID
  *   getLocation()           → Location
@@ -29,31 +32,37 @@ public class QuickShopBridge {
     private final Logger logger;
     private boolean available = false;
 
-    // 缓存的反射 Method 对象，避免每次调用 getDeclaredMethod
     private Object cachedShopManager;
-    private java.lang.reflect.Method getAllShopsMethod;
+    private MethodHandle getAllShopsHandle;
 
     public QuickShopBridge(Logger logger) {
         this.logger = logger;
         try {
             var qsPlugin = Bukkit.getPluginManager().getPlugin("QuickShop-Hikari");
             if (qsPlugin != null && qsPlugin.isEnabled()) {
-                var apiClass = Class.forName("com.ghostchu.quickshop.api.QuickShopAPI");
-                var getInstanceMethod = apiClass.getDeclaredMethod("getInstance");
-                var quickShopApi = getInstanceMethod.invoke(null);
+                var lookup = MethodHandles.lookup();
 
-                // 缓存 ShopManager 和 getAllShops 方法
-                var shopManagerMethod = quickShopApi.getClass().getDeclaredMethod("getShopManager");
-                this.cachedShopManager = shopManagerMethod.invoke(quickShopApi);
-                this.getAllShopsMethod = cachedShopManager.getClass().getDeclaredMethod("getAllShops");
-                this.getAllShopsMethod.setAccessible(true);
+                // 通过 QS 插件的 ClassLoader 加载 QuickShopAPI（避免 Paper remapper 干扰）
+                ClassLoader qsLoader = qsPlugin.getClass().getClassLoader();
+                var apiClass = qsLoader.loadClass("com.ghostchu.quickshop.api.QuickShopAPI");
+
+                var getInstanceHandle = lookup.findStatic(apiClass, "getInstance",
+                        MethodType.methodType(apiClass));
+                var quickShopApi = getInstanceHandle.invoke();
+
+                var getShopManagerHandle = lookup.findVirtual(apiClass, "getShopManager",
+                        MethodType.methodType(Object.class));
+                this.cachedShopManager = getShopManagerHandle.invoke(quickShopApi);
+
+                this.getAllShopsHandle = lookup.findVirtual(cachedShopManager.getClass(), "getAllShops",
+                        MethodType.methodType(List.class));
 
                 this.available = true;
                 logger.info("QuickShop-Hikari API 桥接成功");
             } else {
                 logger.warning("QuickShop-Hikari 插件未找到或未启用");
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             logger.warning("无法桥接 QuickShop-Hikari API: " + e.getMessage());
             this.available = false;
         }
@@ -69,12 +78,12 @@ public class QuickShopBridge {
         if (!available) return result;
 
         try {
-            var allShops = (List<?>) getAllShopsMethod.invoke(cachedShopManager);
+            var allShops = (List<?>) getAllShopsHandle.invoke(cachedShopManager);
             for (Object shop : allShops) {
                 FilteredShop fs = convertShop(shop);
                 if (fs != null) result.add(fs);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             logger.warning("获取商店列表失败: " + e.getMessage());
         }
         return result;
@@ -82,15 +91,16 @@ public class QuickShopBridge {
 
     private FilteredShop convertShop(Object shop) {
         try {
+            var lookup = MethodHandles.lookup();
             var shopClass = shop.getClass();
 
-            long shopId = (long) invokeGetter(shopClass, shop, "getShopId");
-            UUID ownerUuid = (UUID) invokeGetter(shopClass, shop, "getOwner");
-            Location loc = (Location) invokeGetter(shopClass, shop, "getLocation");
-            ItemStack item = (ItemStack) invokeGetter(shopClass, shop, "getItem");
-            double price = (double) invokeGetter(shopClass, shop, "getPrice");
-            Object shopTypeObj = invokeGetter(shopClass, shop, "getShopType");
-            int stackingAmount = (int) invokeGetter(shopClass, shop, "getShopStackingAmount");
+            long shopId = (long) findGetter(lookup, shopClass, "getShopId", long.class).invoke(shop);
+            UUID ownerUuid = (UUID) findGetter(lookup, shopClass, "getOwner", UUID.class).invoke(shop);
+            Location loc = (Location) findGetter(lookup, shopClass, "getLocation", Location.class).invoke(shop);
+            ItemStack item = (ItemStack) findGetter(lookup, shopClass, "getItem", ItemStack.class).invoke(shop);
+            double price = (double) findGetter(lookup, shopClass, "getPrice", double.class).invoke(shop);
+            Object shopTypeObj = findGetter(lookup, shopClass, "getShopType", Object.class).invoke(shop);
+            int stackingAmount = (int) findGetter(lookup, shopClass, "getShopStackingAmount", int.class).invoke(shop);
 
             OfflinePlayer owner = Bukkit.getOfflinePlayer(ownerUuid);
             String ownerName = owner.getName() != null ? owner.getName() : ownerUuid.toString();
@@ -108,18 +118,15 @@ public class QuickShopBridge {
                     material, itemName, price,
                     shopType, stackingAmount
             );
-        } catch (Exception e) {
+        } catch (Throwable e) {
             logger.fine("转换商店数据失败: " + e.getMessage());
             return null;
         }
     }
 
-    /**
-     * 通过 getDeclaredMethod 调用 getter（避免 Paper 反射重写器扫描父类加载无关依赖）。
-     */
-    private Object invokeGetter(Class<?> clazz, Object target, String methodName) throws Exception {
-        var method = clazz.getDeclaredMethod(methodName);
-        method.setAccessible(true);
-        return method.invoke(target);
+    private static MethodHandle findGetter(MethodHandles.Lookup lookup, Class<?> clazz,
+                                           String methodName, Class<?> returnType)
+            throws NoSuchMethodException, IllegalAccessException {
+        return lookup.findVirtual(clazz, methodName, MethodType.methodType(returnType));
     }
 }
