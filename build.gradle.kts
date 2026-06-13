@@ -19,7 +19,7 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("1.21.3-R0.1-SNAPSHOT")
+    paperweight.paperDevBundle("1.21-R0.1-SNAPSHOT")
 
     // QuickShop-Hikari API — compileOnly，运行时由 QS 插件提供
     compileOnly("com.ghostchu:quickshop-api:6.2.0.11")
