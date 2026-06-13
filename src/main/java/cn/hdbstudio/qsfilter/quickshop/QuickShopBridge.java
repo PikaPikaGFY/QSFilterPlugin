@@ -12,20 +12,12 @@ import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * QuickShop-Hikari API 桥接层。
- * 使用 MethodHandle 绕过 Paper 反射重写器，避免触发 PlaceholderAPI 等无关依赖的类加载。
- *
- * QS Shop 方法:
- *   getShopId()             → long
- *   getOwner()              → UUID
- *   getLocation()           → Location
- *   getItem()               → ItemStack
- *   getPrice()              → double
- *   getShopType()           → ShopType (SELLING / BUYING)
- *   getShopStackingAmount() → int
+ * 使用 MethodHandle + privateLookupIn 彻底绕过 Paper 反射重写器。
  */
 public class QuickShopBridge {
 
@@ -39,31 +31,39 @@ public class QuickShopBridge {
         this.logger = logger;
         try {
             var qsPlugin = Bukkit.getPluginManager().getPlugin("QuickShop-Hikari");
-            if (qsPlugin != null && qsPlugin.isEnabled()) {
-                var lookup = MethodHandles.lookup();
-
-                // 通过 QS 插件的 ClassLoader 加载 QuickShopAPI（避免 Paper remapper 干扰）
-                ClassLoader qsLoader = qsPlugin.getClass().getClassLoader();
-                var apiClass = qsLoader.loadClass("com.ghostchu.quickshop.api.QuickShopAPI");
-
-                var getInstanceHandle = lookup.findStatic(apiClass, "getInstance",
-                        MethodType.methodType(apiClass));
-                var quickShopApi = getInstanceHandle.invoke();
-
-                var getShopManagerHandle = lookup.findVirtual(apiClass, "getShopManager",
-                        MethodType.methodType(Object.class));
-                this.cachedShopManager = getShopManagerHandle.invoke(quickShopApi);
-
-                this.getAllShopsHandle = lookup.findVirtual(cachedShopManager.getClass(), "getAllShops",
-                        MethodType.methodType(List.class));
-
-                this.available = true;
-                logger.info("QuickShop-Hikari API 桥接成功");
-            } else {
+            if (qsPlugin == null || !qsPlugin.isEnabled()) {
                 logger.warning("QuickShop-Hikari 插件未找到或未启用");
+                return;
             }
+
+            // 用 QS 插件的 ClassLoader 加载类（绕过 Paper remapper）
+            ClassLoader qsLoader = qsPlugin.getClass().getClassLoader();
+            var apiClass = qsLoader.loadClass("com.ghostchu.quickshop.api.QuickShopAPI");
+            var lookup = MethodHandles.lookup();
+
+            // privateLookupIn — 获取对 QS 模块的完全访问权限
+            var privLookup = MethodHandles.privateLookupIn(apiClass, lookup);
+
+            // QuickShopAPI.getInstance()
+            var getInstanceHandle = privLookup.findStatic(apiClass, "getInstance",
+                    MethodType.methodType(apiClass));
+            var quickShopApi = getInstanceHandle.invoke();
+
+            // quickShopApi.getShopManager() → 返回类型用 apiClass 的方法签名真实类型
+            var getShopManagerHandle = privLookup.findVirtual(apiClass, "getShopManager",
+                    MethodType.methodType(
+                            qsLoader.loadClass("com.ghostchu.quickshop.api.ShopManager")));
+            this.cachedShopManager = getShopManagerHandle.invoke(quickShopApi);
+
+            // shopManager.getAllShops()
+            var smLookup = MethodHandles.privateLookupIn(cachedShopManager.getClass(), lookup);
+            this.getAllShopsHandle = smLookup.findVirtual(cachedShopManager.getClass(), "getAllShops",
+                    MethodType.methodType(List.class));
+
+            this.available = true;
+            logger.info("QuickShop-Hikari API 桥接成功");
         } catch (Throwable e) {
-            logger.warning("无法桥接 QuickShop-Hikari API: " + e.getMessage());
+            logger.log(Level.WARNING, "无法桥接 QuickShop-Hikari API", e);
             this.available = false;
         }
     }
@@ -91,8 +91,8 @@ public class QuickShopBridge {
 
     private FilteredShop convertShop(Object shop) {
         try {
-            var lookup = MethodHandles.lookup();
             var shopClass = shop.getClass();
+            var lookup = MethodHandles.privateLookupIn(shopClass, MethodHandles.lookup());
 
             long shopId = (long) findGetter(lookup, shopClass, "getShopId", long.class).invoke(shop);
             UUID ownerUuid = (UUID) findGetter(lookup, shopClass, "getOwner", UUID.class).invoke(shop);
