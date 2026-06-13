@@ -278,3 +278,85 @@ filter:
 - 端口和过滤参数可在 `plugins/QSFilterPlugin/config.yml` 中修改
 - `/api/health` 不经过过滤引擎，始终可用
 - `/api/price/{item_id}` 是 `/qsfilter lf` 命令和 Web 前端的共用数据源
+
+---
+
+## 7. 前端 WebSQL 对接
+
+### 7.1 架构
+
+前端可以自行建立 WebSQL 数据库，插件通过 HTTP 将数据提供给前端消费。
+
+```
+┌──────────────┐  定时拉取 /api/shops   ┌──────────────────┐
+│  前端 WebSQL  │ ◄─────────────────── │  QSFilterPlugin   │
+│ (Wubiepcu)   │                       │  (插件, port 8765) │
+└──────┬───────┘                       └──────────────────┘
+       │ /api/price/{item_id}
+       ▲
+       │ HTTP GET
+┌──────┴───────┐
+│ /qsfilter lf │
+└──────────────┘
+```
+
+### 7.2 对接步骤
+
+**步骤 1：前端定时拉取商店数据**
+
+定时调用（建议每 60 秒）：
+```
+GET http://<MC服务器IP>:8765/api/shops?show_all=true&limit=200
+```
+
+解析 `shops[]` 数组写入前端 WebSQL。每条商店的 `weighted_avg_price`、`price_ratio`、`price_reasonable` 字段插件已经算好，前端直接用。
+
+**步骤 2：前端实现 `/api/price/{item_id}`**
+
+从 WebSQL 查询指定物品，返回格式与插件本地 API 一致，见 [2.4 物品价格查询](#24-物品价格查询)。
+
+**步骤 3：配置插件指向前端**
+
+在 MC 服务器 `plugins/QSFilterPlugin/config.yml` 中设置：
+```yaml
+# /qsfilter lf 的前端 API 地址（指向 Web 服务器，留空则用本地 http.host:http.port）
+lf-api-url: "http://<前端服务器IP>:<端口>"
+```
+
+| `lf-api-url` 值 | `/qsfilter lf` 请求目标 |
+|---|---|
+| 空（默认） | `http://<http.host>:<http.port>/api/price/<itemId>` |
+| `https://web.example.com` | `https://web.example.com/api/price/<itemId>` |
+
+### 7.3 前端 WebSQL 建议表结构
+
+```sql
+-- 商店快照表（每次全量刷新）
+CREATE TABLE shops (
+    shop_id       INTEGER PRIMARY KEY,
+    owner_uuid    TEXT,
+    owner_name    TEXT,
+    world         TEXT,
+    x             INTEGER, y INTEGER, z INTEGER,
+    material      TEXT,
+    item_name     TEXT,
+    item_id       TEXT,
+    price         REAL,
+    stacking_amount INTEGER,
+    shop_type     TEXT,
+    weighted_avg_price REAL,
+    price_ratio   REAL,
+    price_reasonable INTEGER
+);
+
+-- 物品统计快照
+CREATE TABLE price_stats (
+    material      TEXT PRIMARY KEY,
+    record_count  INTEGER,
+    total_sold_amount INTEGER,
+    selling_count INTEGER,
+    selling_min   REAL, selling_max REAL, selling_avg REAL,
+    buying_count  INTEGER,
+    buying_min    REAL, buying_max REAL, buying_avg REAL
+);
+```
