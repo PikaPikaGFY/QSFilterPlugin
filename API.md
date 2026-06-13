@@ -360,3 +360,91 @@ CREATE TABLE price_stats (
     buying_min    REAL, buying_max REAL, buying_avg REAL
 );
 ```
+
+---
+
+## 8. WebHook 推送
+
+插件在商店变更时**主动 POST** 到前端，无需前端轮询。
+
+### 8.1 配置
+
+```yaml
+webhook:
+  url: "http://<前端服务器IP>:<端口>"
+```
+
+留空则禁用。配置后 `/qsfilter condition` 会显示 WebHook 状态。
+
+### 8.2 端点（由前端实现）
+
+#### POST /webhook/shop-create
+
+商店新建时推送，POST body 为完整的商店 JSON（格式同 `/api/shops` 的 shop 对象）。
+
+```json
+{
+  "shop_id": 42,
+  "owner_uuid": "a1b2c3d4-...",
+  "owner_name": "Steve",
+  "world": "world",
+  "x": 100, "y": 64, "z": -200,
+  "material": "DIAMOND",
+  "item_name": "钻石",
+  "item_id": "diamond",
+  "price": 50.0,
+  "stacking_amount": 64,
+  "shop_type": "SELLING"
+}
+```
+
+#### POST /webhook/shop-delete
+
+商店删除时推送：
+
+```json
+{
+  "shop_id": 42
+}
+```
+
+#### POST /webhook/shop-price
+
+商店价格变动时推送：
+
+```json
+{
+  "shop_id": 42,
+  "old_price": 50.0,
+  "new_price": 60.0,
+  "shop": { ... 当前完整商店数据 ... }
+}
+```
+
+#### POST /webhook/shop-type
+
+商店类型变更（出售↔收购）时推送：
+
+```json
+{
+  "shop_id": 42,
+  "old_type": "SELLING",
+  "new_type": "BUYING",
+  "shop": { ... 当前完整商店数据 ... }
+}
+```
+
+### 8.3 实现要点
+
+- 前端实现上述 4 个 `POST /webhook/*` 端点
+- 插件异步发送，不阻塞游戏主线程，超时 5 秒
+- 返回任意 2xx 即视为成功
+
+### 8.4 完整数据流
+
+```
+QuickShop 事件触发
+    → ShopChangeWebhook (事件监听)
+    → POST http://<前端>/webhook/shop-*
+    → 前端 WebSQL 即时更新，无需 60 秒轮询
+```
