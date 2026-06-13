@@ -11,7 +11,7 @@ softdepend:
 commands:
   qsfilter:
     description: QSFilterPlugin 管理命令
-    usage: /qsfilter <reload|stats|clearcache>
+    usage: /qsfilter <lf|condition|about|reload|stats|clearcache>
     permission: qsfilter.admin
 
 permissions:

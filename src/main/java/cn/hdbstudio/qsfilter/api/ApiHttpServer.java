@@ -74,6 +74,10 @@ public class ApiHttpServer {
         }
     }
 
+    public boolean isRunning() {
+        return app != null;
+    }
+
     private void registerRoutes() {
         // 健康检查（永远不加密）
         app.get("/api/health", this::handleHealth);

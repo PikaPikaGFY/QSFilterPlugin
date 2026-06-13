@@ -130,4 +130,14 @@ public class PriceFilterEngine {
         filteredShopsCache.clear();
         weightedPriceCache.clear();
     }
+
+    /**
+     * 根据物品材质查询加权均价。
+     * @param material 材质名（如 DIAMOND），大小写不敏感
+     * @return 加权均价，无数据返回 -1
+     */
+    public double getWeightedPrice(String material) {
+        Double price = weightedPriceCache.get(material.toUpperCase());
+        return price != null ? price : -1.0;
+    }
 }
