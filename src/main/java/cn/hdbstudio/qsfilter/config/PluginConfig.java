@@ -23,6 +23,8 @@ public class PluginConfig {
 
     private final String lfApiUrl;
 
+    private final String webhookUrl;
+
     public PluginConfig(YamlConfiguration yaml) {
         this.httpHost = yaml.getString("http.host", "0.0.0.0");
         this.httpPort = yaml.getInt("http.port", 8765);
@@ -42,6 +44,8 @@ public class PluginConfig {
         this.refreshIntervalSeconds = yaml.getInt("data-collection.refresh-interval-seconds", 60);
 
         this.lfApiUrl = yaml.getString("lf-api-url", "");
+
+        this.webhookUrl = yaml.getString("webhook.url", "");
     }
 
     public static PluginConfig load(File dataFolder) {
@@ -84,4 +88,7 @@ public class PluginConfig {
 
     /** /qsfilter lf 的前端 API 地址。为空时自动使用本地 http://host:port */
     public String getLfApiUrl() { return lfApiUrl; }
+
+    /** 商店变更 WebHook 地址（新建/删除/改价时 POST）。为空则禁用 */
+    public String getWebhookUrl() { return webhookUrl; }
 }

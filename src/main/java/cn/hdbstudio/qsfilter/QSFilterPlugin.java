@@ -10,6 +10,7 @@ import cn.hdbstudio.qsfilter.storage.DatabaseManager;
 import cn.hdbstudio.qsfilter.storage.TransactionRepository;
 import cn.hdbstudio.qsfilter.api.ApiHttpServer;
 import cn.hdbstudio.qsfilter.crypto.EncryptionUtil;
+import cn.hdbstudio.qsfilter.webhook.ShopChangeWebhook;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -37,6 +38,7 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
     private QuickShopBridge quickShopBridge;
     private ShopDataCollector shopDataCollector;
     private ApiHttpServer apiHttpServer;
+    private ShopChangeWebhook shopChangeWebhook;
 
     @Override
     public void onEnable() {
@@ -61,6 +63,7 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
         } else {
             getLogger().info("QuickShop-Hikari 桥接成功");
             new TransactionListener(this, transactionRepository);
+            shopChangeWebhook = new ShopChangeWebhook(this, pluginConfig);
         }
 
         shopDataCollector = new ShopDataCollector(this, quickShopBridge, priceFilterEngine, pluginConfig);
@@ -233,6 +236,8 @@ public final class QSFilterPlugin extends JavaPlugin implements TabCompleter {
         sender.sendMessage("§7  商店总数: §f" + priceFilterEngine.getTotalShopCount());
         sender.sendMessage("§7  过滤后: §f" + priceFilterEngine.getFilteredShopCount());
         sender.sendMessage("§7  交易记录: §f" + transactionRepository.countAll());
+        String wh = pluginConfig.getWebhookUrl();
+        sender.sendMessage("§7  WebHook: " + (wh != null && !wh.isEmpty() ? "§a● " + wh : "§c● 未配置"));
     }
 
     // --- about ---

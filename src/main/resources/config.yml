@@ -12,6 +12,10 @@ http:
 # /qsfilter lf 的前端 API 地址（指向 Web 服务器，留空则用本地 http.host:http.port）
 lf-api-url: ""
 
+# 商店变更 WebHook（商店新建/删除/价格变更时 POST 到前端）
+webhook:
+  url: ""
+
 # 价格过滤配置
 filter:
   enabled: true
